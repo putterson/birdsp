@@ -10,8 +10,16 @@ $(document).ready(function() {
     //Game Constants
     var G = 9.81;
     var M = 1000000;
+    var e = 0.1; // coefficient of restitution
+    
     var R = 75;
     var outer = R*5;
+    var orbSize = 25;
+    var orbRadius = orbSize / 4; //This value is based off the image
+
+    //Game score vars
+    var score = 0;
+    var bestscore = 0;
 
     var background = new Image();
 
@@ -30,9 +38,9 @@ $(document).ready(function() {
 	TX = W / 2;
 	TY = H / 2;	
 	
-	ctx.imageSmoothingEnabled = true;//false;
-	ctx.mozImageSmoothingEnabled = true;//false;
-	ctx.webkitImageSmoothingEnabled = true;//false;
+	ctx.imageSmoothingEnabled = false;
+	ctx.mozImageSmoothingEnabled = false;
+	ctx.webkitImageSmoothingEnabled = false;
 
 
 	// The rest of this is to save a background gradient as an image, cause drawing gradients is slower than an image
@@ -101,6 +109,12 @@ $(document).ready(function() {
 	return v;
     }
 
+    Vector.prototype.sub = function(v2) {
+	var v = new Vector(this.x - v2.x,
+			   this.y - v2.y);
+	return v;
+    }
+
     Vector.prototype.mult = function (v2) {
 	var v = new Vector(this.x * v2.x,
 			   this.y * v2.y);
@@ -148,6 +162,11 @@ $(document).ready(function() {
         return v.scale(-1).normalize();
     }
 
+    //normal between two positions
+    function norm(pos1, pos2){
+	return pos1.sub(pos2);
+    }
+
     //
     // Orbiter stuff
     //
@@ -186,9 +205,24 @@ $(document).ready(function() {
         return Math.sqrt((v.x * v.x)+(v.y * v.y));
     }
 
+    //dist between two positions
+    function dist2(v1, v2){
+	var x = v1.x - v2.x;
+	var y = v1.y - v2.y;
+	return Math.sqrt((x * x) + (y * y));
+    }
+
 
     function dot(v1, v2){
         return (v1.x * v2.y)+(v2.x * v1.y);
+    }
+
+    function rk4_finalstep(p1, v1, v2, v3, v4, dt){
+	var v = new Vector(
+	    this.x = p1.x + (v1.x + 2*v2.x + 2*v3.x + v4.x)*(dt/6),
+	    this.y = p1.y + (v1.y + 2*v2.y + 2*v3.y + v4.y)*(dt/6)
+	);
+	return v;
     }
 
     function rk4(orb, dt) {
@@ -203,36 +237,41 @@ $(document).ready(function() {
 	var v1 = orb.vel;
 	var force = orb.force;
 	
-	var a1 = getForce(p1, v1).add(force);
+	var a1 = getForce(p1, v1, orb).add(force);
 	    
 	var p2 = p1.add(v1.scale(0.5).scale(dt));
 	var v2 = v1.add(a1.scale(0.5).scale(dt));
-	var a2 = getForce(p2, v2).add(force);
+	var a2 = getForce(p2, v2, orb).add(force);
 	
 	var p3 = p1.add(v2.scale(0.5).scale(dt));
 	var v3 = v1.add(a2.scale(0.5).scale(dt));
-	var a3 = getForce(p3, v3).add(force);
+	var a3 = getForce(p3, v3, orb).add(force);
 
 	var p4 = p1.add(v3.scale(dt));
 	var v4 = v1.add(a3.scale(dt));
-	var a4 = getForce(p4, v4).add(force);
+	var a4 = getForce(p4, v4, orb).add(force);
 
-	var pf = p1.add(v1.add(v2.scale(2).add(v3.scale(2)).add(v4)).scale(dt/6));
-	var vf = v1.add(a1.add(a2.scale(2).add(a3.scale(2)).add(a4)).scale(dt/6));
+	//var pf = p1.add(v1.add(v2.scale(2).add(v3.scale(2)).add(v4)).scale(dt/6));
+	//var vf = v1.add(a1.add(a2.scale(2).add(a3.scale(2)).add(a4)).scale(dt/6));
+
+	var pf = rk4_finalstep(p1, v1, v2, v3, v4, dt);
+	var vf = rk4_finalstep(v1, a1, a2, a3, a4, dt);
 
 	orb.pos = pf;
 	orb.vel = vf;
     }
 
-    function getForce(p, v){
+    function getForce(p, v, o){
 	
 	var d = dist(p);
 
         // The force on the orbiter is G*M/d^2
         var f = G*M/(d*d);
         var n = normToOrigin(p);
-	var drag = v.scale(-0.1*Math.max(0,mag(v)-300));
-
+	var drag = v.scale(-0.1*Math.max(0,mag(v)-300)); // using magic velocity 300
+	if(o.dead){
+	    drag = drag.add(v.scale(-0.02));
+	}
 	// Add a force in the normal dir with magnitude f
         return n.scale(f).add(drag);
     }
@@ -269,11 +308,26 @@ $(document).ready(function() {
 
     
     function drawOrb(orb){
-	var w = 25;
+	var w = orbSize;
+
+	var h_offset = w / 2.05;
+	var w_offset = w / -25;
+
+	
+	
 	var h = w * imgSput.height / imgSput.width;
 	ctx.translate(orb.pos.x , orb.pos.y );
 	ctx.rotate(orb.orient.angle() + Math.PI / 2);
-	ctx.drawImage(imgSput, - w/2, -h/2, w, h);
+	ctx.drawImage(imgSput, - w/2 + w_offset , -h/2 + h_offset, w, h);
+	ctx.beginPath();
+	ctx.arc(0, 0, orbRadius, 0, Math.PI*2);
+	if(orb.dead){
+	    ctx.strokeStyle = "red";
+	    ctx.stroke();
+	}else if(orb === currOrb){
+	    ctx.fillStyle = "green";
+	    ctx.fill();
+	}
     }
 
     var upv = new Vector(0,-1);
@@ -286,6 +340,11 @@ $(document).ready(function() {
 	    var size = 200;
 	    ctx.drawImage(imgEarth, -R, -R, 2*R, 2*R * imgEarth.height / imgEarth.width);	    
 	});
+
+	ctx.font = "30px Fixedsys";
+	ctx.fillStyle = "green";
+	ctx.fillText("in contact: " + score,10,30);
+	ctx.fillText("best: " + bestscore, 10, 60);
 	
 	orbiterList.forEach(function(o) {
 
@@ -317,28 +376,73 @@ $(document).ready(function() {
     var invspeed = 1000;
 
     function step(){
+	score = 0;
 	orbiterList.forEach(function(o) {
+	    //collisions with outer and inner limits
 	    if(dist(o.pos) > outer && o.dead !== true){
 		o.dead = true;
 		o.vel = o.vel.scale(0.4);
 		o.force = new Vector(0,0);
 		if(currOrb === o){currOrb = newOrb();}		
-	    }else if( dist(o.pos) < R ){
+	    }
+	    if( dist(o.pos) < R ){
 		deadOrbList.push(o);
 		if(currOrb === o){currOrb = newOrb();}		
 	    }
+
+	    // inter-object collisions
+	    orbiterList.forEach(function(o2) {
+		if(dist2(o.pos, o2.pos) <= 2*orbRadius && o !== o2){
+		    var n = norm(o.pos, o2.pos).normalize();
+		    var coll = dot(o.vel.sub(o2.vel), n);
+		    if(coll < 0){
+			var j = coll * (1+e) * (0.5);
+			o.vel = o.vel.sub(n.scale(j));
+			o2.vel = o2.vel.add(n.scale(j));
+
+			if(!o.dead){
+			    o.dead = true;
+			    o.force = new Vector(0,0);
+			}
+			if(!o2.dead){
+			    o2.dead = true;
+			    o2.force = new Vector(0,0);
+			}
+			if(currOrb === o || currOrb === o2){
+			    currOrb.started = true;
+			    currOrb = newOrb();
+			}
+		    }
+		 }
+	    });
+	    
 	    if(o.started){
 		rk4(o, DT);
 	    }
 
+	    if(!o.dead){
+		score++;
+	    }
+
 	});
+
 	if(currOrb.started){ currOrb.t += DT; }
-	if(currOrb.t > 5){ currOrb = newOrb();}
+	if(currOrb.t > 5){ currOrb = newOrb();}else{
+	    score--;
+	}
+
 	deadOrbList.forEach(function(o) {
+	    //score--;
             if (orbiterList.indexOf(o) !== -1) {
 		orbiterList.splice(orbiterList.indexOf(o), 1);
+		deadOrbList.splice(deadOrbList.indexOf(o), 1);
             }
 	});
+
+	bestscore = Math.max(score, bestscore);
+	
+
+	
     }
 
     $(document).mousedown(function(){
@@ -357,7 +461,7 @@ $(document).ready(function() {
 	oldT = now;
 
 	// This ensures that the simulation runs at the same speed, even if the drawing can't keep up
- 	while(dt > 0) {
+ 	while(dt > 0 && dt < 3) {
 
 	    dt -= DT;
 
